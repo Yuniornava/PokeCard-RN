@@ -17,6 +17,16 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import { fetchConManejoErrores, pokemonEstandarIds } from './utils/fetchUtils';
+import { pokemonEspeciales } from './src/data/pokemonEspeciales';
+import {
+  GestureHandlerRootView,
+  Gesture,
+  GestureDetector,
+  TapGestureHandler,
+  State
+} from 'react-native-gesture-handler';
+
 SplashScreen.preventAutoHideAsync();
 
 export default function App() {
@@ -27,43 +37,128 @@ export default function App() {
   const [appIsReady, setAppIsReady] = useState(false);
   const [habilidades, setHabilidades] = useState([]);
   const [descripcion, setDescripcion] = useState('');
-  const [IsSearchOpen, setIsSearchOpen] = useState(false)
-  const [Buscarpokemon, setBuscarPokemon] = useState('')
-
-  // Función para buscar pokemon
-  const fetchNewPokemon = async (pokemon) => {
-    try {
-      const id = isNaN(pokemon) ? pokemon.toLowerCase().trim() : parseInt(pokemon);
-      const respuesta = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
-      
-      if (!respuesta.ok) {
-        throw new Error('Pokémon no encontrado');
-      }
-      
-      const fetchdatos = await respuesta.json();
-      setDatos(fetchdatos);
-      setNumero(fetchdatos.id);
-      
-      if (fetchdatos.abilities) {
-        await cargarHabilidades(fetchdatos.abilities);
-      }
-
-      await cargarDescripcion(fetchdatos.id);
-      
-      closeSearch();
-    } catch(error) {
-      console.log("Error buscando pokemon:", error);
-      alert('Pokémon no encontrado. Intenta con un ID válido (1-1025) o nombre en inglés.');
-    }
-  };
+  const [IsSearchOpen, setIsSearchOpen] = useState(false);
+  const [Buscarpokemon, setBuscarPokemon] = useState('');
+  const [busquedaActual, setBusquedaActual] = useState('');
+  const [cargando, setCargando] = useState(false);
+  const [generacion, setGeneracion] = useState(0);
 
   // Animaciones con animated
   const inputWidth = useRef(new Animated.Value(0)).current;
   const inputOpacity = useRef(new Animated.Value(0)).current;
   const botonOpaco = useRef(new Animated.Value(1)).current;
+  
+  // Para animación de feedback de tap
+  const imageScale = useRef(new Animated.Value(1)).current;
+  const descripcionScale = useRef(new Animated.Value(1)).current;
 
   const screenWidth = Dimensions.get('window').width;
   const maxInputWidth = screenWidth * 0.7;
+  const SWIPE_THRESHOLD = 80;
+  const VERTICAL_THRESHOLD = 120;
+
+  // Función para obtener un Pokémon aleatorio (incluye formas especiales)
+  const obtenerPokemonAleatorio = () => {
+    const esEspecial = Math.random() < 0.3;
+    
+    if (esEspecial && pokemonEspeciales.length > 0) {
+      const indiceAleatorio = Math.floor(Math.random() * pokemonEspeciales.length);
+      return pokemonEspeciales[indiceAleatorio];
+    } else {
+      const indiceAleatorio = Math.floor(Math.random() * pokemonEstandarIds.length);
+      return pokemonEstandarIds[indiceAleatorio];
+    }
+  };
+
+  // Función para buscar pokemon
+  const fetchNewPokemon = async (pokemon) => {
+    if (cargando) return;
+    
+    setCargando(true);
+    try {
+      const id = isNaN(pokemon) ? pokemon.toString().toLowerCase().trim() : parseInt(pokemon);
+      
+      console.log(`Buscando Pokémon: ${id}`);
+      const fetchdatos = await fetchConManejoErrores(`https://pokeapi.co/api/v2/pokemon/${id}`);
+      
+      // Si no se encontró el Pokémon
+      if (!fetchdatos) {
+        alert(`Pokémon no encontrado: "${pokemon}"\n\nIntenta con:\n• ID (1-1025)\n• Nombre en inglés\n• Formas especiales válidas\n\nEjemplos: "25", "pikachu", "charizard-mega-x"`);
+        return;
+      }
+      
+      setDatos(fetchdatos);
+      setNumero(fetchdatos.id);
+      setBusquedaActual(id.toString());
+      
+      if (fetchdatos.abilities) {
+        await cargarHabilidades(fetchdatos.abilities);
+      }
+
+      await cargarDescripcionSoloEspanol(fetchdatos.id);
+      
+      closeSearch();
+    } catch(error) {
+      console.log("Error inesperado:", error);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // Configurar gesto de pan (swipe) con la nueva API
+  const panGesture = Gesture.Pan()
+    .onEnd((event) => {
+      const { translationX, translationY } = event;
+      
+      if (Math.abs(translationX) > SWIPE_THRESHOLD && !cargando) {
+        if (translationX > 0) {
+          // Swipe derecha - Pokémon anterior
+          setNumero(numero <= 1 ? 1 : numero - 1);
+        } else {
+          // Swipe izquierda - Pokémon siguiente
+          setNumero(numero + 1);
+        }
+      } else if (translationY > VERTICAL_THRESHOLD && !cargando) {
+        // Swipe abajo - Pokémon aleatorio
+        let nuevoPokemon;
+        do {
+          nuevoPokemon = obtenerPokemonAleatorio();
+        } while (nuevoPokemon.toString() === busquedaActual);
+        
+        fetchNewPokemon(nuevoPokemon);
+      }
+    });
+
+  // Animación de feedback para tap
+  const animarTap = (animatedValue) => {
+    Animated.sequence([
+      Animated.timing(animatedValue, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(animatedValue, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      })
+    ]).start();
+  };
+
+  // Tap en imagen para cambiar sprite (ahora con un solo tap)
+  const onImageTap = () => {
+    animarTap(imageScale);
+    const nextGen = generacion === 9 ? 0 : generacion + 1;
+    setGeneracion(nextGen);
+  };
+
+  // Tap en descripción para cambiar entre descripciones en español
+  const onDescripcionTap = () => {
+    animarTap(descripcionScale);
+    if (datos) {
+      cargarDescripcionSoloEspanol(datos.id);
+    }
+  };
 
   const openSearch = () => {
     setIsSearchOpen(true);
@@ -120,18 +215,17 @@ export default function App() {
     
     for (const ability of abilities) {
       try {
-        const res = await fetch(ability.ability.url);
-        const data = await res.json();
+        const data = await fetchConManejoErrores(ability.ability.url);
         
         const nombreEs = data.names?.find(n => n.language.name === 'es');
         
         habilidadesTraducidas.push({
-          nombre: nombreEs ? nombreEs.name : ability.ability.name.replace('-', ' '),
+          nombre: nombreEs ? nombreEs.name : ability.ability.name.replace(/-/g, ' '),
           oculta: ability.is_hidden
         });
       } catch (error) {
         habilidadesTraducidas.push({
-          nombre: ability.ability.name.replace('-', ' '),
+          nombre: ability.ability.name.replace(/-/g, ' '),
           oculta: ability.is_hidden
         });
       }
@@ -140,32 +234,51 @@ export default function App() {
     setHabilidades(habilidadesTraducidas);
   };
 
-  // Función para cargar la descripción
-  const cargarDescripcion = async (pokemonId) => {
-    try {
-      const respuesta = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemonId}`);
-      const data = await respuesta.json();
-      
-      const entradaEspanol = data.flavor_text_entries?.find(
-        entry => entry.language.name === 'es'
-      );
-      
-      if (entradaEspanol) {
-        setDescripcion(entradaEspanol.flavor_text.replace(/\n/g, ' '));
-      } else {
-        const entradaIngles = data.flavor_text_entries?.find(
-          entry => entry.language.name === 'en'
+  // Función para cargar la descripción SOLO en español (cambia entre diferentes versiones)
+  const cargarDescripcionSoloEspanol = async (pokemonId) => {
+    const data = await fetchConManejoErrores(`https://pokeapi.co/api/v2/pokemon-species/${pokemonId}`);
+    
+    // Si no hay datos de especie
+    if (!data) {
+      setDescripcion('No hay información de especie disponible para este Pokémon.');
+      return;
+    }
+    
+    // Obtener todas las entradas en español
+    const entradasEspanol = data.flavor_text_entries?.filter(
+      entry => entry.language.name === 'es'
+    ) || [];
+    
+    if (entradasEspanol.length > 0) {
+      // Si ya hay una descripción, buscar la siguiente
+      if (descripcion && descripcion !== 'Cargando descripción...' && descripcion !== 'No hay descripción en español disponible.') {
+        // Buscar el índice de la descripción actual
+        const descripcionesLimpia = entradasEspanol.map(entry => 
+          entry.flavor_text.replace(/\f/g, ' ').replace(/\n/g, ' ')
         );
         
-        if (entradaIngles) {
-          setDescripcion(entradaIngles.flavor_text.replace(/\n/g, ' '));
-        } else {
-          setDescripcion('No hay descripción disponible.');
-        }
+        const currentIndex = descripcionesLimpia.indexOf(descripcion);
+        const nextIndex = (currentIndex + 1) % descripcionesLimpia.length;
+        
+        setDescripcion(descripcionesLimpia[nextIndex]);
+      } else {
+        // Primera vez, usar la más reciente
+        const versionesOrden = ['scarlet', 'violet', 'legends-arceus', 'brilliant-diamond', 
+                                'shining-pearl', 'sword', 'shield', 'ultra-sun', 'ultra-moon',
+                                'sun', 'moon', 'omega-ruby', 'alpha-sapphire', 'x', 'y',
+                                'black-2', 'white-2', 'black', 'white', 'platinum',
+                                'heartgold', 'soulsilver', 'diamond', 'pearl', 'emerald',
+                                'ruby', 'sapphire', 'crystal', 'silver', 'gold', 'yellow',
+                                'blue', 'red', 'firered', 'leafgreen'];
+        
+        const entradaReciente = entradasEspanol.sort((a, b) => {
+          return versionesOrden.indexOf(b.version.name) - versionesOrden.indexOf(a.version.name);
+        })[0];
+        
+        setDescripcion(entradaReciente.flavor_text.replace(/\f/g, ' ').replace(/\n/g, ' '));
       }
-    } catch (error) {
-      console.error('Error cargando descripción:', error);
-      setDescripcion('');
+    } else {
+      setDescripcion('No hay descripción en español disponible.');
     }
   };
 
@@ -173,20 +286,23 @@ export default function App() {
   useEffect(() => {
     async function loadResourcesAndDataAsync() {
       try {
+        // Cargar fuente
         await Font.loadAsync({
           'Pokemon-Classic': require('./assets/fonts/Pokemon-Classic.ttf'),
         });
         setFontLoaded(true);
 
-        const respuesta = await fetch(`https://pokeapi.co/api/v2/pokemon/${numero}`);
-        const fetchdatos = await respuesta.json();
-        setDatos(fetchdatos);
+        // Cargar Pokémon inicial
+        const fetchdatos = await fetchConManejoErrores(`https://pokeapi.co/api/v2/pokemon/${numero}`);
         
-        if (fetchdatos.abilities) {
-          await cargarHabilidades(fetchdatos.abilities);
+        if (fetchdatos) {
+          setDatos(fetchdatos);
+          
+          if (fetchdatos.abilities) {
+            await cargarHabilidades(fetchdatos.abilities);
+          }
+          await cargarDescripcionSoloEspanol(numero);
         }
-
-        await cargarDescripcion(numero);
 
         await new Promise(resolve => setTimeout(resolve, 300));
       } catch (e) {
@@ -204,24 +320,24 @@ export default function App() {
   useEffect(() => {
     if (numero >= 1 && appIsReady) {
       const cargarPokemon = async () => {
-        try {
-          const respuesta = await fetch(`https://pokeapi.co/api/v2/pokemon/${numero}`);
-          const fetchdatos = await respuesta.json();
-          setDatos(fetchdatos);
-          
-          if (fetchdatos.abilities) {
-            await cargarHabilidades(fetchdatos.abilities);
-          }
-
-          await cargarDescripcion(numero);
-        } catch(error) {
-          console.log("Error cargando pokemon:", error);
-          setNumero(prev => prev - 1);
+        const fetchdatos = await fetchConManejoErrores(`https://pokeapi.co/api/v2/pokemon/${numero}`);
+        
+        // Si no se encontró el Pokémon, retrocede
+        if (!fetchdatos) {
+          setNumero(prev => prev > 1 ? prev - 1 : 1);
+          return;
         }
+        
+        setDatos(fetchdatos);
+        
+        if (fetchdatos.abilities) {
+          await cargarHabilidades(fetchdatos.abilities);
+        }
+        await cargarDescripcionSoloEspanol(numero);
       };
       cargarPokemon();
     }
-  }, [numero, appIsReady, esshiny]);
+  }, [numero, appIsReady]);
 
   const getFontFamily = () => {
     if (fontLoaded) {
@@ -335,192 +451,309 @@ export default function App() {
   };
 
   const obtenerImagen = () => {
-    if (esshiny && datos.sprites?.front_shiny) {
-      return datos.sprites.front_shiny;
-    } else if (datos.sprites?.front_default) {
-      return datos.sprites.front_default;
-    }
-    if (datos.sprites?.other?.['official-artwork']?.front_default) {
-      return datos.sprites.other['official-artwork'].front_default;
+    if (generacion === 0) {
+      if (esshiny) {
+        return datos.sprites?.front_shiny || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+      } else {
+        return datos.sprites?.front_default || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+      }
     }
     
-    return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+    if (generacion === 9) {
+      if (esshiny) {
+        return datos.sprites?.other?.['official-artwork']?.front_shiny || 
+               `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+      } else {
+        return datos.sprites?.other?.['official-artwork']?.front_default || 
+               `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+      }
+    }
+    
+    if (generacion >= 1 && generacion <= 8) {
+      switch(generacion) {
+        case 1:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-i']?.yellow?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-i']?.['red-blue']?.front_default ||
+                   datos.sprites?.versions?.['generation-i']?.yellow?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 2:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-ii']?.crystal?.front_shiny ||
+                   datos.sprites?.versions?.['generation-ii']?.gold?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-ii']?.crystal?.front_default ||
+                   datos.sprites?.versions?.['generation-ii']?.gold?.front_default ||
+                   datos.sprites?.versions?.['generation-ii']?.silver?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 3:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-iii']?.emerald?.front_shiny ||
+                   datos.sprites?.versions?.['generation-iii']?.['ruby-sapphire']?.front_shiny ||
+                   datos.sprites?.versions?.['generation-iii']?.['firered-leafgreen']?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-iii']?.emerald?.front_default ||
+                   datos.sprites?.versions?.['generation-iii']?.['ruby-sapphire']?.front_default ||
+                   datos.sprites?.versions?.['generation-iii']?.['firered-leafgreen']?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 4:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-iv']?.platinum?.front_shiny ||
+                   datos.sprites?.versions?.['generation-iv']?.['diamond-pearl']?.front_shiny ||
+                   datos.sprites?.versions?.['generation-iv']?.['heartgold-soulsilver']?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-iv']?.platinum?.front_default ||
+                   datos.sprites?.versions?.['generation-iv']?.['diamond-pearl']?.front_default ||
+                   datos.sprites?.versions?.['generation-iv']?.['heartgold-soulsilver']?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 5:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-v']?.['black-white']?.animated?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return  datos.sprites?.versions?.['generation-v']?.['black-white']?.animated?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 6:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-vi']?.['x-y']?.front_shiny ||
+                   datos.sprites?.versions?.['generation-vi']?.['omegaruby-alphasapphire']?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-vi']?.['x-y']?.front_default ||
+                   datos.sprites?.versions?.['generation-vi']?.['omegaruby-alphasapphire']?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 7:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-vii']?.['ultra-sun-ultra-moon']?.front_shiny ||
+                   datos.sprites?.versions?.['generation-vii']?.icons?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-vii']?.['ultra-sun-ultra-moon']?.front_default ||
+                   datos.sprites?.versions?.['generation-vii']?.icons?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        case 8:
+          if (esshiny) {
+            return datos.sprites?.versions?.['generation-viii']?.icons?.front_shiny ||
+                   datos.sprites?.front_shiny ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+          } else {
+            return datos.sprites?.versions?.['generation-viii']?.icons?.front_default ||
+                   datos.sprites?.front_default ||
+                   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+          }
+        default:
+          break;
+      }
+    }
+    
+    if (esshiny) {
+      return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/shiny/${datos.id}.png`;
+    } else {
+      return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${datos.id}.png`;
+    }
   };
-
+  
   const currentFontFamily = getFontFamily();
 
-  
   const obtenerColorBorde = () => {
     return esshiny ? '#FFD700' : obtenerColorTipo(primerTipo);
   };
 
   return (
-    <LinearGradient
-      colors={[obtenerColorTipo(primerTipo), obtenerColorTipo(segundoTipo) || '#2C2C2C']} 
-      style={styles.container}
-      start={{ x: 0.5, y: 0 }}
-      end={{ x: 0.5, y: 1 }}    
-    >
-      <StatusBar style='light' />
-      
-      {/* SEARCH CONTAINER */}
-      <View style={styles.searchWrapper}>
-        <Animated.View style={[styles.inputContainer, {width: inputWidth, opacity: inputOpacity , }]} >
-          <TextInput
-            style={[styles.input, {fontFamily: currentFontFamily} ]}
-            placeholder='Buscar Pokemon'
-            value={Buscarpokemon}
-            onChangeText={setBuscarPokemon}
-            autoFocus={IsSearchOpen}
-            placeholderTextColor='#888'
-            onSubmitEditing={() => {
-              if (Buscarpokemon.trim() !== '') {
-                fetchNewPokemon(Buscarpokemon);
-              }
-            }}
-          />
-          <TouchableOpacity onPress={closeSearch} style={styles.closeButton}>
-            <Text style={{ fontSize: 20, color: '#333' }}>✖</Text>
-          </TouchableOpacity>
-        </Animated.View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <LinearGradient
+        colors={[obtenerColorTipo(primerTipo), obtenerColorTipo(segundoTipo) || '#2C2C2C']} 
+        style={styles.container}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}    
+      >
+        <StatusBar style='light' />
         
-        <Animated.View style={{opacity: botonOpaco}}>
-          <TouchableOpacity onPress={openSearch} style={[styles.searchButton, {borderColor: esshiny? '#FFD700': '#ddd'}]}>
-            <Text style={{ fontSize: 20, color: IsSearchOpen ? "#ccc" : "#333" }}>🔍</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      </View>
-      
-      {/* CARD DE POKEMON */}
-      <View style={[
-        styles.card, 
-        { 
-          borderColor: obtenerColorBorde(),
-          borderWidth: 3, 
-          shadowColor: obtenerColorBorde()
-        }
-      ]}>
-        <View style={styles.container_image}>
-          <Image 
-            style={styles.image} 
-            source={{ uri: obtenerImagen() }}
-            resizeMode="contain"
-            onError={(e) => console.log('Error cargando imagen:', e.nativeEvent.error)}
-          />
+        {/* SEARCH CONTAINER */}
+        <View style={styles.searchWrapper}>
+          <Animated.View style={[styles.inputContainer, {width: inputWidth, opacity: inputOpacity}]} >
+            <TextInput
+              style={[styles.input, {fontFamily: currentFontFamily}]}
+              placeholder='Buscar Pokemon (ej: 25, pikachu, charizard-mega-x)'
+              value={Buscarpokemon}
+              onChangeText={setBuscarPokemon}
+              autoFocus={IsSearchOpen}
+              placeholderTextColor='#888'
+              onSubmitEditing={() => {
+                if (Buscarpokemon.trim() !== '') {
+                  fetchNewPokemon(Buscarpokemon);
+                }
+              }}
+            />
+            <TouchableOpacity onPress={closeSearch} style={styles.closeButton}>
+              <Text style={{ fontSize: 20, color: '#333' }}>✖</Text>
+            </TouchableOpacity>
+          </Animated.View>
+          
+          <Animated.View style={{opacity: botonOpaco}}>
+            <TouchableOpacity onPress={openSearch} style={[styles.searchButton, {borderColor: esshiny? '#FFD700': '#ddd'}]}>
+              <Text style={{ fontSize: 20, color: IsSearchOpen ? "#ccc" : "#333" }}>🔍</Text>
+            </TouchableOpacity>
+          </Animated.View>
         </View>
         
-        <Text style={[styles.name, { fontFamily: currentFontFamily }]}>
-          {datos?.name ? datos.name.charAt(0).toUpperCase() + datos.name.slice(1) : 'Cargando...'}
-        </Text>
-        
-        <View>
-          <Text style={{textAlign: 'center', fontSize: 24 , fontFamily: currentFontFamily }}>
-            ID: #{datos.id}
-          </Text>
-        </View>
-        
-        <View style={styles.tiposContainer}>
-          {datos?.types?.map((tipoInfo, index) => (
-            <View 
-              key={index} 
-              style={[
-                styles.tipoPill,
-                { backgroundColor: obtenerColorTipo(tipoInfo.type.name) }
-              ]}
-            >
-              <Text style={[styles.tipoTexto, { fontFamily: currentFontFamily }]}>
-                {traduccionDeTipos(tipoInfo.type.name)}
-              </Text>
-            </View>
-          ))}
-        </View>
-        
-        <View style={styles.habilidadesContainer}>
-          <Text style={[styles.habilidadesTitulo, { fontFamily: currentFontFamily }]}>
-            Habilidades
-          </Text>
-          <View style={styles.habilidadesLista}>
-            {habilidades.map((habilidad, index) => (
-              <View 
-                key={index}
-                style={[
-                  styles.habilidadPill,
-                  { backgroundColor: obtenerColorHabilidad(habilidad.oculta) }
-                ]}
-              >
-                <Text style={[styles.habilidadTexto, { fontFamily: currentFontFamily }]}>
-                  {habilidad.nombre} {habilidad.oculta ? '!' : ''}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-        
-        <View style={styles.descripcionContainer}>
-          <Text style={[styles.descripcionTitulo, { fontFamily: currentFontFamily }]}>
-            Descripción
-          </Text>
+        {/* CARD DE POKEMON CON GESTOS (nueva API) */}
+        <GestureDetector gesture={panGesture}>
           <View style={[
-            styles.descripcionCaja,
-            {
-              backgroundColor: `${obtenerColorTipo(primerTipo)}20`, 
-              borderWidth: 2, 
-              borderColor: obtenerColorTipo(primerTipo)
+            styles.card, 
+            { 
+              borderColor: obtenerColorBorde(),
+              borderWidth: 3, 
+              shadowColor: obtenerColorBorde(),
             }
           ]}>
-            <Text style={[styles.descripcionTexto, { fontFamily: currentFontFamily }]}>
-              {descripcion || 'Cargando descripción...'}
+            {/* IMAGEN CON TAP GESTURE (UN SOLO TAP) */}
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={onImageTap}
+              style={styles.imageTouchable}
+            >
+              <Animated.View style={{ transform: [{ scale: imageScale }] }}>
+                <View style={styles.container_image}>
+                  <Image 
+                    style={styles.image} 
+                    source={{ uri: obtenerImagen() }}
+                    resizeMode="contain"
+                    onError={(e) => console.log('Error cargando imagen:', e.nativeEvent.error)}
+                  />
+                  <View style={styles.generationIndicator}>
+                    <Text style={[styles.generationText, { fontFamily: currentFontFamily }]}>
+                      {generacion === 0 ? 'Default' : generacion === 9 ? 'Artwork' : `Gen ${generacion}`}
+                    </Text>
+                  </View>
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+            
+            <Text style={[styles.name, { fontFamily: currentFontFamily }]}>
+              {datos?.name ? datos.name.charAt(0).toUpperCase() + datos.name.slice(1).replace(/-/g, ' ') : 'Cargando...'}
             </Text>
+            
+            <View>
+              <Text style={{textAlign: 'center', fontSize: 24 , fontFamily: currentFontFamily }}>
+                ID: #{datos.id}
+              </Text>
+            </View>
+            
+            <View style={styles.tiposContainer}>
+              {datos?.types?.map((tipoInfo, index) => (
+                <View 
+                  key={index} 
+                  style={[
+                    styles.tipoPill,
+                    { backgroundColor: obtenerColorTipo(tipoInfo.type.name) }
+                  ]}
+                >
+                  <Text style={[styles.tipoTexto, { fontFamily: currentFontFamily }]}>
+                    {traduccionDeTipos(tipoInfo.type.name)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+            
+            <View style={styles.habilidadesContainer}>
+              <Text style={[styles.habilidadesTitulo, { fontFamily: currentFontFamily }]}>
+                Habilidades
+              </Text>
+              <View style={styles.habilidadesLista}>
+                {habilidades.map((habilidad, index) => (
+                  <View 
+                    key={index}
+                    style={[
+                      styles.habilidadPill,
+                      { backgroundColor: obtenerColorHabilidad(habilidad.oculta) }
+                    ]}
+                  >
+                    <Text style={[styles.habilidadTexto, { fontFamily: currentFontFamily }]}>
+                      {habilidad.nombre} {habilidad.oculta ? ' (oculta)' : ''}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+            
+            {/* DESCRIPCIÓN CON TAP GESTURE (UN SOLO TAP) */}
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={onDescripcionTap}
+              style={styles.descripcionTouchable}
+            >
+              <Animated.View style={[styles.descripcionContainer, { transform: [{ scale: descripcionScale }] }]}>
+                <Text style={[styles.descripcionTitulo, { fontFamily: currentFontFamily }]}>
+                  Descripción 
+                </Text>
+                <View style={[
+                  styles.descripcionCaja,
+                  {
+                    backgroundColor: `${obtenerColorTipo(primerTipo)}20`, 
+                    borderWidth: 2, 
+                    borderColor: obtenerColorTipo(primerTipo)
+                  }
+                ]}>
+                  <Text style={[styles.descripcionTexto, { fontFamily: currentFontFamily }]}>
+                    {descripcion || 'Cargando descripción...'}
+                  </Text>
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+            
+            {/* INDICADOR DE GESTOS */}
+
           </View>
-        </View>
-      </View>
-      
- 
-      {/* BOTÓN IZQUIERDA: RETROCEDER */}
-      <TouchableOpacity 
-        onPress={() => setNumero(numero <= 1 ? 1 : numero - 1)} 
-        style={[styles.botonRetroceder, {borderColor: esshiny? '#FFD700': '#ddd'}]}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.botonTexto}>⬅️</Text>
-      </TouchableOpacity>
-      
-      {/* BOTÓN  SHINY */}
-      <TouchableOpacity 
-        onPress={() => {
-          setShiny(!esshiny)
-        }} 
-        style={[styles.botonShiny, {borderColor: esshiny? '#FFD700': '#ddd'}]}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.botonTexto}>{esshiny?'🌟' : '⭐'}</Text>
-      </TouchableOpacity>
-      
-      {/* BOTÓN DERECHA: AVANZAR */}
-      <TouchableOpacity 
-        onPress={() => setNumero(numero + 1)} 
-        style={[styles.botonAvanzar, {borderColor: esshiny? '#FFD700': '#ddd'}]}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.botonTexto}>➡️</Text>
-      </TouchableOpacity>
-      
-      {/* BOTÓN DERECHA: RANDOM */}
-      <TouchableOpacity 
-        onPress={() => {
-          let nuevoNumero;
-          do {
-            nuevoNumero = Math.floor(Math.random() * 1025) + 1;
-          } while (nuevoNumero === numero);
-          
-          setNumero(nuevoNumero);
-        }} 
-        style={[styles.botonRandom, {borderColor: esshiny? '#FFD700': '#ddd'}]}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.botonTextoRandom}>🎲</Text>
-      </TouchableOpacity>
-    </LinearGradient>
+        </GestureDetector>
+        
+        {/* BOTÓN SHINY */}
+        <TouchableOpacity 
+          onPress={() => {
+            setShiny(!esshiny)
+          }} 
+          style={[styles.botonShiny, {borderColor: esshiny? '#FFD700': '#ddd'}]}
+          activeOpacity={0.7}
+          disabled={cargando}
+        >
+          <Text style={styles.botonTexto}>{esshiny?'🌟' : '⭐'}</Text>
+        </TouchableOpacity>
+        
+        {/* Indicador de carga */}
+        {cargando && (
+          <View style={styles.overlayCargando}>
+            <ActivityIndicator size="large" color="#FFF" />
+            <Text style={styles.textoCargando}>Cargando Pokémon...</Text>
+          </View>
+        )}
+      </LinearGradient>
+    </GestureHandlerRootView>
   );
 }
 
@@ -570,15 +803,34 @@ const styles = StyleSheet.create({
     height: 200,
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
   },
   image: {
     width: 320,
     height: 200,
   },
+  imageTouchable: {
+    width: '100%',
+  },
+  generationIndicator: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  generationText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   name: {
     textAlign: 'center',
     fontSize: 28,
     marginBottom: 10,
+    marginTop: 10,
   },
   tiposContainer: {
     flexDirection: 'row',
@@ -646,51 +898,13 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#444',
   },
-  // BOTONES INDIVIDUALES CON POSICIONES FIJAS
-  botonAvanzar: {
-    position: 'absolute',
-    right: -2,
-    top: '50%',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 9999,
-    zIndex: 9999,
-    transform: [{ translateY: -30 }],
-  },
-  botonRetroceder: {
-    position: 'absolute',
-    left: -2,
-    top: '50%',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 9999,
-    zIndex: 9999,
-    transform: [{ translateY: -30 }],
+  descripcionTouchable: {
+    width: '100%',
   },
   botonShiny: {
     position: 'absolute',
     left: 15,
-    top: 50,
+    top: '5%',
     width: 45,
     height: 45,
     borderRadius: 30,
@@ -698,43 +912,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 9999,
     zIndex: 9999,
-    
-
-  },
-  botonRandom: {
-    position: 'absolute',
-    right: 20,
-    top: '8%',
-    width: 45,
-    height: 45,
-    borderRadius: 30,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 9999,
-    zIndex: 9999,
-    transform: [{ translateY: 50 }], // 80px debajo del botón avanzar
   },
   botonTexto: {
     fontSize: 24,
     textAlign: 'center',
   },
-  botonTextoRandom: {
-    fontSize: 24,
+  gestureHint: {
+    marginTop: 10,
+    paddingHorizontal: 10,
+  },
+  gestureHintText: {
+    fontSize: 11,
+    color: '#666',
     textAlign: 'center',
+    fontStyle: 'italic',
   },
   searchWrapper: {
     position: 'absolute',
@@ -790,6 +987,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 99999,
-    marginLeft: 10,
+    top:-11,
+    left:4
+  },
+  overlayCargando: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100000,
+  },
+  textoCargando: {
+    color: 'white',
+    marginTop: 10,
+    fontSize: 16,
   }
 });

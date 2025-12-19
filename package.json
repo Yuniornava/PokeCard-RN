@@ -17,7 +17,8 @@
     "loadash": "^1.0.0",
     "lodash": "^4.17.21",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "react-native-gesture-handler": "^2.29.1"
   },
   "private": true
 }
