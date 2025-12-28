@@ -22,9 +22,7 @@ import { pokemonEspeciales } from './src/data/pokemonEspeciales';
 import {
   GestureHandlerRootView,
   Gesture,
-  GestureDetector,
-  TapGestureHandler,
-  State
+  GestureDetector
 } from 'react-native-gesture-handler';
 
 SplashScreen.preventAutoHideAsync();
@@ -51,6 +49,14 @@ export default function App() {
   // Para animación de feedback de tap
   const imageScale = useRef(new Animated.Value(1)).current;
   const descripcionScale = useRef(new Animated.Value(1)).current;
+  
+  // Animaciones para movimiento de la carta y flechas
+  const cardTranslateX = useRef(new Animated.Value(0)).current;
+  const cardTranslateY = useRef(new Animated.Value(0)).current;
+  const cardScale = useRef(new Animated.Value(1)).current;
+  const leftArrowOpacity = useRef(new Animated.Value(0)).current;
+  const rightArrowOpacity = useRef(new Animated.Value(0)).current;
+  const downArrowOpacity = useRef(new Animated.Value(0)).current;
 
   const screenWidth = Dimensions.get('window').width;
   const maxInputWidth = screenWidth * 0.7;
@@ -105,27 +111,175 @@ export default function App() {
     }
   };
 
-  // Configurar gesto de pan (swipe) con la nueva API
+  // Función para resetear animaciones de la carta
+  const resetCardAnimations = () => {
+    Animated.parallel([
+      Animated.spring(cardTranslateX, {
+        toValue: 0,
+        damping: 15,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(cardTranslateY, {
+        toValue: 0,
+        damping: 15,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(cardScale, {
+        toValue: 1,
+        damping: 15,
+        stiffness: 150,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  // Configurar gesto de pan (swipe) con feedback visual
   const panGesture = Gesture.Pan()
+    .onBegin(() => {
+      // Resetear todas las animaciones al comenzar el gesto
+      Animated.parallel([
+        Animated.timing(leftArrowOpacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(rightArrowOpacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(downArrowOpacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    })
+    .onUpdate((event) => {
+      const { translationX, translationY } = event;
+      
+      // Mover la carta según el gesto
+      cardTranslateX.setValue(translationX);
+      cardTranslateY.setValue(translationY > 0 ? translationY : 0); // Solo movimiento hacia abajo
+      
+      // Escalar la carta ligeramente cuando se mueve
+      const scale = 1 - Math.abs(translationX) / 800;
+      cardScale.setValue(Math.max(0.95, scale));
+      
+      // Mostrar flechas según la dirección
+      if (Math.abs(translationX) > 20 && Math.abs(translationY) < 50) {
+        if (translationX > 0) {
+          // Deslizando a la derecha - mostrar flecha izquierda (retroceder)
+          leftArrowOpacity.setValue(Math.min(translationX / SWIPE_THRESHOLD, 1));
+          rightArrowOpacity.setValue(0);
+          downArrowOpacity.setValue(0);
+        } else {
+          // Deslizando a la izquierda - mostrar flecha derecha (avanzar)
+          rightArrowOpacity.setValue(Math.min(Math.abs(translationX) / SWIPE_THRESHOLD, 1));
+          leftArrowOpacity.setValue(0);
+          downArrowOpacity.setValue(0);
+        }
+      }
+      
+      // Mostrar flecha hacia abajo para aleatorio
+      if (translationY > 30 && Math.abs(translationX) < 40) {
+        downArrowOpacity.setValue(Math.min(translationY / VERTICAL_THRESHOLD, 1));
+        leftArrowOpacity.setValue(0);
+        rightArrowOpacity.setValue(0);
+      }
+    })
     .onEnd((event) => {
       const { translationX, translationY } = event;
       
+      // Resetear flechas
+      Animated.parallel([
+        Animated.timing(leftArrowOpacity, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(rightArrowOpacity, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(downArrowOpacity, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      
+      // Verificar si se superó el umbral del gesto
       if (Math.abs(translationX) > SWIPE_THRESHOLD && !cargando) {
-        if (translationX > 0) {
-          // Swipe derecha - Pokémon anterior
-          setNumero(numero <= 1 ? 1 : numero - 1);
-        } else {
-          // Swipe izquierda - Pokémon siguiente
-          setNumero(numero + 1);
-        }
+        // Animación de deslizamiento para el cambio de Pokémon
+        Animated.parallel([
+          Animated.timing(cardTranslateX, {
+            toValue: translationX > 0 ? 500 : -500,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardTranslateY, {
+            toValue: 0,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardScale, {
+            toValue: 0.8,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          // Cambiar Pokémon
+          if (translationX > 0) {
+            // Swipe derecha - Pokémon anterior
+            setNumero(numero <= 1 ? 1 : numero - 1);
+          } else {
+            // Swipe izquierda - Pokémon siguiente
+            setNumero(numero + 1);
+          }
+          
+          // Resetear posición de la carta
+          resetCardAnimations();
+        });
       } else if (translationY > VERTICAL_THRESHOLD && !cargando) {
-        // Swipe abajo - Pokémon aleatorio
-        let nuevoPokemon;
-        do {
-          nuevoPokemon = obtenerPokemonAleatorio();
-        } while (nuevoPokemon.toString() === busquedaActual);
-        
-        fetchNewPokemon(nuevoPokemon);
+        // Animación para swipe hacia abajo (aleatorio)
+        Animated.parallel([
+          Animated.timing(cardTranslateY, {
+            toValue: 500,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardScale, {
+            toValue: 0.8,
+            duration: 300,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          // Pokémon aleatorio
+          let nuevoPokemon;
+          do {
+            nuevoPokemon = obtenerPokemonAleatorio();
+          } while (nuevoPokemon.toString() === busquedaActual);
+          
+          fetchNewPokemon(nuevoPokemon);
+          
+          // Resetear posición de la carta
+          resetCardAnimations();
+        });
+      } else {
+        // Si no se superó el umbral, volver a la posición original
+        resetCardAnimations();
       }
     });
 
@@ -595,6 +749,58 @@ export default function App() {
       >
         <StatusBar style='light' />
         
+        {/* FLECHAS INDICADORAS */}
+        {/* Flecha izquierda (retroceder) */}
+        <Animated.View 
+          style={[
+            styles.arrowContainer,
+            styles.leftArrowContainer,
+            { opacity: leftArrowOpacity }
+          ]}
+        >
+          <Text style={styles.arrowIcon}>👈</Text>
+          <Text style={[styles.arrowText, { fontFamily: currentFontFamily }]}>
+            Retroceder
+          </Text>
+          <Text style={[styles.arrowSubText, { fontFamily: currentFontFamily }]}>
+            Pokémon anterior
+          </Text>
+        </Animated.View>
+        
+        {/* Flecha derecha (avanzar) */}
+        <Animated.View 
+          style={[
+            styles.arrowContainer,
+            styles.rightArrowContainer,
+            { opacity: rightArrowOpacity }
+          ]}
+        >
+          <Text style={styles.arrowIcon}>👉</Text>
+          <Text style={[styles.arrowText, { fontFamily: currentFontFamily }]}>
+            Avanzar
+          </Text>
+          <Text style={[styles.arrowSubText, { fontFamily: currentFontFamily }]}>
+            Pokémon siguiente
+          </Text>
+        </Animated.View>
+        
+        {/* Flecha abajo (aleatorio) */}
+        <Animated.View 
+          style={[
+            styles.arrowContainer,
+            styles.downArrowContainer,
+            { opacity: downArrowOpacity }
+          ]}
+        >
+          <Text style={styles.arrowIcon}>🎲</Text>
+          <Text style={[styles.arrowText, { fontFamily: currentFontFamily }]}>
+            Aleatorio
+          </Text>
+          <Text style={[styles.arrowSubText, { fontFamily: currentFontFamily }]}>
+            Pokémon random
+          </Text>
+        </Animated.View>
+        
         {/* SEARCH CONTAINER */}
         <View style={styles.searchWrapper}>
           <Animated.View style={[styles.inputContainer, {width: inputWidth, opacity: inputOpacity}]} >
@@ -623,17 +829,22 @@ export default function App() {
           </Animated.View>
         </View>
         
-        {/* CARD DE POKEMON CON GESTOS (nueva API) */}
+        {/* CARD DE POKEMON CON MOVIMIENTO */}
         <GestureDetector gesture={panGesture}>
-          <View style={[
+          <Animated.View style={[
             styles.card, 
             { 
               borderColor: obtenerColorBorde(),
               borderWidth: 3, 
               shadowColor: obtenerColorBorde(),
+              transform: [
+                { translateX: cardTranslateX },
+                { translateY: cardTranslateY },
+                { scale: cardScale }
+              ],
             }
           ]}>
-            {/* IMAGEN CON TAP GESTURE (UN SOLO TAP) */}
+            {/* IMAGEN CON TAP GESTURE */}
             <TouchableOpacity 
               activeOpacity={0.7}
               onPress={onImageTap}
@@ -703,7 +914,7 @@ export default function App() {
               </View>
             </View>
             
-            {/* DESCRIPCIÓN CON TAP GESTURE (UN SOLO TAP) */}
+            {/* DESCRIPCIÓN CON TAP GESTURE */}
             <TouchableOpacity 
               activeOpacity={0.7}
               onPress={onDescripcionTap}
@@ -728,9 +939,8 @@ export default function App() {
               </Animated.View>
             </TouchableOpacity>
             
-            {/* INDICADOR DE GESTOS */}
-
-          </View>
+            
+          </Animated.View>
         </GestureDetector>
         
         {/* BOTÓN SHINY */}
@@ -903,8 +1113,8 @@ const styles = StyleSheet.create({
   },
   botonShiny: {
     position: 'absolute',
-    left: 15,
-    top: '5%',
+    right: 15,
+    top: '12%',
     width: 45,
     height: 45,
     borderRadius: 30,
@@ -1005,5 +1215,57 @@ const styles = StyleSheet.create({
     color: 'white',
     marginTop: 10,
     fontSize: 16,
-  }
+  },
+  // Estilos para las flechas
+  arrowContainer: {
+    position: 'absolute',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 25,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 9999,
+    zIndex: 9999,
+  },
+  leftArrowContainer: {
+    left: 8,
+    top: '50%',
+    transform: [{ translateY: -50 }],
+    borderColor: '#FF9800',
+    backgroundColor: 'rgba(255, 152, 0, 0.95)',
+  },
+  rightArrowContainer: {
+    right: 8,
+    top: '50%',
+    transform: [{ translateY: -50 }],
+    borderColor: '#4CAF50',
+    backgroundColor: 'rgba(76, 175, 80, 0.95)',
+  },
+  downArrowContainer: {
+    top: 100,
+    alignSelf: 'center',
+    borderColor: '#9C27B0',
+    backgroundColor: 'rgba(156, 39, 176, 0.95)',
+  },
+  arrowIcon: {
+    fontSize: 40,
+    color: 'white',
+    marginBottom: 5,
+  },
+  arrowText: {
+    fontSize: 18,
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  arrowSubText: {
+    fontSize: 12,
+    color: 'white',
+    opacity: 0.9,
+  },
 });
